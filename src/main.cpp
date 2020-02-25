@@ -13,9 +13,11 @@
 #define AIR_HEATER_PIN 5
 #define GROUND_HEATER_PIN 6
 #define FAN_PIN 7
+#define LIGHT_PIN 8
+#define ONE_WIRE_BUS 12 //for ground sensors
+#define RELAYS_ON LOW
+#define RELAYS_OFF HIGH
 
-// Data wire is plugged into port 2 on the Arduino
-#define ONE_WIRE_BUS 2
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
@@ -104,12 +106,30 @@ float getTempSuolo2(){
 
 float getGroundTempMin(){
   sensors.requestTemperatures();
-  return min(sensors.getTempCByIndex(0), sensors.getTempCByIndex(1));
+  float tmpTemp1 = sensors.getTempCByIndex(0);
+  float tmpTemp2 = sensors.getTempCByIndex(1);
+  
+  if (tmpTemp1 == DEVICE_DISCONNECTED_C)
+  {
+    return tmpTemp2;
+  }
+  
+  if (tmpTemp2 == DEVICE_DISCONNECTED_C)
+  {
+    return tmpTemp1;
+  }
+
+  return min(tmpTemp1, tmpTemp2);
 }
 
 float getGroundTempMax(){
+
+
   sensors.requestTemperatures();
-  return max(sensors.getTempCByIndex(0), sensors.getTempCByIndex(1));
+  float tmpTemp1 = sensors.getTempCByIndex(0);
+  float tmpTemp2 = sensors.getTempCByIndex(1);
+  //not necessary check the DEVICE_DISCONNECTED_C, because is the minimum number
+  return max(tmpTemp1, tmpTemp2);
 }
 
 
@@ -126,13 +146,13 @@ void airHeater(bool status){
     if (!airHeaterON)
     {
       airHeaterON = true;
-      digitalWrite(AIR_HEATER_PIN,HIGH);
+      digitalWrite(AIR_HEATER_PIN,RELAYS_ON);
       Serial.println("Air heater on!");
     }
   }else if (airHeaterON)
   {
     airHeaterON=false;
-    digitalWrite(AIR_HEATER_PIN,LOW);
+    digitalWrite(AIR_HEATER_PIN, RELAYS_OFF);
     Serial.println("Air heater off!");
   }  
 }
@@ -145,13 +165,13 @@ void groundHeater(bool status){
     if (!groundHeaterON)
     {
       groundHeaterON = true;
-      digitalWrite(GROUND_HEATER_PIN,HIGH);
+      digitalWrite(GROUND_HEATER_PIN, RELAYS_ON);
       Serial.println("ground heater on!");
     }
   }else if (groundHeaterON)
   {
     groundHeaterON = false;
-    digitalWrite(GROUND_HEATER_PIN,LOW);
+    digitalWrite(GROUND_HEATER_PIN, RELAYS_OFF);
     Serial.println("ground heater off!");
   }  
 }
@@ -164,7 +184,7 @@ void fan(bool status){
     if (!fanON)
     {
       fanON = true;
-      digitalWrite(FAN_PIN,HIGH);
+      digitalWrite(FAN_PIN,RELAYS_ON);
       sprintf(strBuffer,"Fan on for %d secons", fanDuration); // maybe better getting it from te neotimer timer
       Serial.println(strBuffer );
     
@@ -173,7 +193,7 @@ void fan(bool status){
     }else if (fanON)
     {
       fanON = false;
-      digitalWrite(FAN_PIN,LOW);
+      digitalWrite(FAN_PIN, RELAYS_OFF);
       sprintf(strBuffer,"Fan off, turns on every %d secons", fanInterval); // maybe better getting it from te neotimer timer
       Serial.println(strBuffer );
     }
@@ -195,6 +215,9 @@ void checkAirHeater(){
  *check if necessary turn on or off ground heater
 */
 void checkGroundHeater(){
+//controllare lo stato quando un sensore è < mintemp e l'atro > maxtemp, si alterna...
+
+
   if (groundHeaterON){
     if (getGroundTempMax() > maxGroundT){
       groundHeater(false);
@@ -225,7 +248,6 @@ void checkFan(){
   {
     fan(true);
   }
-
 }
 
 
@@ -245,10 +267,13 @@ void setup(void)
   pinMode(AIR_HEATER_PIN,OUTPUT);
   pinMode(GROUND_HEATER_PIN,OUTPUT);
   pinMode(FAN_PIN,OUTPUT);
+  pinMode(LIGHT_PIN, OUTPUT);
 
-  digitalWrite(AIR_HEATER_PIN,LOW);
-  digitalWrite(GROUND_HEATER_PIN,LOW);
-  digitalWrite(FAN_PIN,LOW);
+  digitalWrite(AIR_HEATER_PIN,RELAYS_OFF);
+  digitalWrite(GROUND_HEATER_PIN,RELAYS_OFF);
+  digitalWrite(FAN_PIN,RELAYS_OFF);
+  digitalWrite(LIGHT_PIN,RELAYS_OFF);
+
 
   // Start up the library DallasTemperature
   sensors.begin();
@@ -367,20 +392,28 @@ if (lcdRefreshTimer.repeat())
   // display.clearDisplay();  //Pulisce il buffer da inviare al display
   display.setTextSize(1);  //Imposta la grandezza del testo
   display.setTextColor(WHITE,BLACK); //Imposta il colore del testo (Solo bianco)
-  display.setCursor(5,homeTopBoxHeight-8); //Imposta la posizione del cursore (Larghezza,Altezza)
-  
 
+  //display air temp
+  display.setCursor(5,homeTopBoxHeight-8); //Imposta la posizione del cursore (Larghezza,Altezza)
   display.print(getAirTemp1());
 
-  
+  //display ground temp1 and ground temp 2
   display.setCursor(homeTopBoxWidth*2-6, 0);
   if (groundTempDisplaying) display.print("1"); else display.print("2");
 
   display.setCursor(homeTopBoxWidth+5,homeTopBoxHeight-8);
-  if (groundTempDisplaying) display.print(getTempSuolo1()); else display.print(getTempSuolo2());
+
+  float tmpTemp = groundTempDisplaying?getTempSuolo1():getTempSuolo2();
+  //checks if is a valid value
+  if (tmpTemp == DEVICE_DISCONNECTED_C){
+    display.print("---");
+  } else {
+    display.print(tmpTemp);
+  }
   
   groundTempDisplaying = !groundTempDisplaying;
   
+  //display air humidity
   display.setCursor(homeTopBoxWidth*2+5,homeTopBoxHeight-8);
   display.print(getHAria1());
   
