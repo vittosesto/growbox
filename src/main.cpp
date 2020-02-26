@@ -8,7 +8,7 @@
 #include <neotimer.h>
 #include <Adafruit_SSD1306.h>
 // #include <splash.h>
-
+#include <RTClib.h>
 
 #define AIR_HEATER_PIN 5
 #define GROUND_HEATER_PIN 6
@@ -31,7 +31,7 @@ BlueDot_BME280 bme1;                                     //Object for Sensor 1
 int bme1Detected = 0;                                    //Checks if Sensor 1 is available
 //int bme2Detected = 0;                                    //Checks if Sensor 2 is available
 
-float BME_280_correction = -1.5;    //correzione della temperatura perche' si autoriscalda
+float BME_280_correction = -0.2; //-1.5;    //correzione della temperatura perche' si autoriscalda
 
 const int displayWidth = 128;
 const int displayHeight = 32;
@@ -41,6 +41,8 @@ const int homeTopBoxHeight=16;
 bool groundTempDisplaying=true; //to alternate the temperature displaying on the home screen
 Adafruit_SSD1306 display(displayWidth, displayHeight, &Wire, -1);
 
+RTC_DS3231 rtc;
+DateTime now;
 
 const byte VER=1;
 const byte BUFFERSIZE=100;
@@ -55,6 +57,10 @@ float maxAirHum = 80.0;
 float minGroundT = 25.0; //30.0
 float maxGroundT = 28.0; //35.0
 
+float airHumMin = 55.00;
+float airHumMax = 75.00;
+
+
 int fanDuration = 10000;
 int fanInterval = 30000;
 
@@ -66,6 +72,7 @@ float airHum1 = 0.0;
 bool airHeaterON = false;
 bool groundHeaterON = false;
 bool fanON = false;
+bool humFanOn = false;
 
 
 /* timers */
@@ -185,17 +192,11 @@ void fan(bool status){
     {
       fanON = true;
       digitalWrite(FAN_PIN,RELAYS_ON);
-      sprintf(strBuffer,"Fan on for %d secons", fanDuration); // maybe better getting it from te neotimer timer
-      Serial.println(strBuffer );
-    
-    
   }
     }else if (fanON)
     {
       fanON = false;
       digitalWrite(FAN_PIN, RELAYS_OFF);
-      sprintf(strBuffer,"Fan off, turns on every %d secons", fanInterval); // maybe better getting it from te neotimer timer
-      Serial.println(strBuffer );
     }
   
 }
@@ -228,11 +229,26 @@ void checkGroundHeater(){
 }
 
 void checkFan(){
+
+  if (getHAria1() > airHumMax){
+    humFanOn = true;
+    fan(true);
+    Serial.println("Humidity too High");
+  }else if(humFanOn && getHAria1() < airHumMin){  //if fan for humidity is runnig, check if humidity is ok and turn fan off
+    humFanOn = false;
+    fan(false);
+    Serial.println("Humidity OK");
+  }
+// periodical fan cycle only if the humidity fan is off
+
+if(!humFanOn){
   if (fanON)
   {
     if (fanDurationTimer.done())
     {
       fan(false);
+      sprintf(strBuffer,"Fan off, turns on every %d secons", fanInterval/1000); // maybe better getting it from te neotimer timer
+      Serial.println(strBuffer );
     }
     
   }else if (fanIntervalTimer.repeat())
@@ -240,6 +256,8 @@ void checkFan(){
     /* starts the timer */
     fanDurationTimer.start();
     fan(true);
+    sprintf(strBuffer,"Fan on for %d secons", fanDuration/1000); // maybe better getting it from te neotimer timer
+    Serial.println(strBuffer );
   }
   
   
@@ -248,6 +266,75 @@ void checkFan(){
   {
     fan(true);
   }
+}
+}
+
+void printToSerial(){
+    Serial.println("| TAria1 | TSuolo1 | TSuolo2 | HAria1 |");
+    strcpy(strBuffer, "| ");
+    dtostrf(getAirTemp1(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,"  | ");
+    dtostrf(getTempSuolo1(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,"   | ");
+    dtostrf(getTempSuolo2(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,"   | ");
+    dtostrf(getHAria1(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,"  |\n");
+    Serial.print( strBuffer );
+    now=rtc.now();
+    sprintf(strBuffer,"log:%04d/%02d/%02d %02d:%02d:%02d fan:%d heat:%d grou:%d - ", now.year(), now.month(), now.day(), now.hour(), now.minute(), now.second(), fanON, airHeaterON, groundHeaterON );
+
+    dtostrf(getAirTemp1(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,";");
+    dtostrf(getHAria1(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,";");
+    dtostrf(getTempSuolo1(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,";");
+    dtostrf(getTempSuolo2(), 4, 2, &strBuffer[strlen(strBuffer)]);
+    strcat(strBuffer,";");
+
+    Serial.println(strBuffer);
+}
+
+void printMainScreen(){
+  // display.clearDisplay();  //Pulisce il buffer da inviare al display
+  display.setTextSize(1);  //Imposta la grandezza del testo
+  display.setTextColor(WHITE,BLACK); //Imposta il colore del testo (Solo bianco)
+
+  //display air temp
+  display.setCursor(5,homeTopBoxHeight-8); //Imposta la posizione del cursore (Larghezza,Altezza)
+  display.print(getAirTemp1());
+
+  //display ground temp1 and ground temp 2
+  display.setCursor(homeTopBoxWidth*2-6, 0);
+  if (groundTempDisplaying) display.print("1"); else display.print("2");
+
+  display.setCursor(homeTopBoxWidth+5,homeTopBoxHeight-8);
+
+  float tmpTemp = groundTempDisplaying?getTempSuolo1():getTempSuolo2();
+  //checks if is a valid value
+  if (tmpTemp == DEVICE_DISCONNECTED_C){
+    display.print("---");
+  } else {
+    display.print(tmpTemp);
+  }
+  
+  groundTempDisplaying = !groundTempDisplaying;
+  
+  //display air humidity
+  display.setCursor(homeTopBoxWidth*2+5,homeTopBoxHeight-8);
+  display.print(getHAria1());
+  
+  display.setCursor(0, homeTopBoxHeight+1);
+  now = rtc.now();
+  sprintf(strBuffer, "%02d:%02d",now.hour(), now.minute());
+  display.print(strBuffer);
+
+  /* relais status*/
+  display.setCursor(0,displayHeight-8);
+  sprintf(strBuffer,"fan:%d heat:%d grou:%d", fanON, airHeaterON, groundHeaterON);
+  display.print(strBuffer);
+  display.display();
 }
 
 
@@ -264,6 +351,23 @@ void setup(void)
     Serial.println(F("SSD1306 allocation failed"));
     for(;;); // Don't proceed, loop forever
   }
+
+  if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+/**
+  if (rtc.lostPower()) {
+//  if (true) { //forzo il settaggio dell'ora, DA TOGLIERE
+    Serial.println("RTC lost power, lets set the time!");
+    // following line sets the RTC to the date & time this sketch was compiled
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    // This line sets the RTC with an explicit date & time, for example to set
+    // January 21, 2014 at 3am you would call:
+    // rtc.adjust(DateTime(2014, 1, 21, 3, 0, 0));
+  }
+*/
+
   pinMode(AIR_HEATER_PIN,OUTPUT);
   pinMode(GROUND_HEATER_PIN,OUTPUT);
   pinMode(FAN_PIN,OUTPUT);
@@ -367,69 +471,16 @@ void loop(void)
     /*
     *scrive su monitor seriale le temperature
     */ 
-    Serial.println("| TAria1 | TSuolo1 | TSuolo2 | HAria1 |");
-    strcpy(strBuffer, "| ");
-    dtostrf(getAirTemp1(), 4, 2, &strBuffer[strlen(strBuffer)]);
-    strcat(strBuffer,"  | ");
-    dtostrf(getTempSuolo1(), 4, 2, &strBuffer[strlen(strBuffer)]);
-    strcat(strBuffer,"   | ");
-    dtostrf(getTempSuolo2(), 4, 2, &strBuffer[strlen(strBuffer)]);
-    strcat(strBuffer,"   | ");
-    dtostrf(getHAria1(), 4, 2, &strBuffer[strlen(strBuffer)]);
-    strcat(strBuffer,"  |\n\n");
-    Serial.print( strBuffer );
+    printToSerial();
   };
 
   checkAirHeater();
   checkGroundHeater();
   checkFan();
-  
-  
 
-if (lcdRefreshTimer.repeat())
-{
-
-  // display.clearDisplay();  //Pulisce il buffer da inviare al display
-  display.setTextSize(1);  //Imposta la grandezza del testo
-  display.setTextColor(WHITE,BLACK); //Imposta il colore del testo (Solo bianco)
-
-  //display air temp
-  display.setCursor(5,homeTopBoxHeight-8); //Imposta la posizione del cursore (Larghezza,Altezza)
-  display.print(getAirTemp1());
-
-  //display ground temp1 and ground temp 2
-  display.setCursor(homeTopBoxWidth*2-6, 0);
-  if (groundTempDisplaying) display.print("1"); else display.print("2");
-
-  display.setCursor(homeTopBoxWidth+5,homeTopBoxHeight-8);
-
-  float tmpTemp = groundTempDisplaying?getTempSuolo1():getTempSuolo2();
-  //checks if is a valid value
-  if (tmpTemp == DEVICE_DISCONNECTED_C){
-    display.print("---");
-  } else {
-    display.print(tmpTemp);
-  }
-  
-  groundTempDisplaying = !groundTempDisplaying;
-  
-  //display air humidity
-  display.setCursor(homeTopBoxWidth*2+5,homeTopBoxHeight-8);
-  display.print(getHAria1());
-  
-  
-
-  display.display(); //Invia il buffer da visualizzare al display
-  /* relais status*/
-  display.setCursor(10,displayHeight-8);
-  sprintf(strBuffer,"fan:%d heat:%d grou:%d ", fanON, airHeaterON, groundHeaterON);
-  display.print(strBuffer);
-  display.display();
-
-}
-
-
-
-  
+if (lcdRefreshTimer.repeat()){
+  //display info aon display
+  printMainScreen();
+};
 }
 
